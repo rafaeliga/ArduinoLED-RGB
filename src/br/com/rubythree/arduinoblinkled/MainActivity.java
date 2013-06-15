@@ -4,24 +4,49 @@ import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.message.BasicNameValuePair;
 
 import android.app.Activity;
 import android.app.PendingIntent;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.ParcelFileDescriptor;
+import android.os.StrictMode;
+import android.os.Vibrator;
 import android.util.Log;
-import android.widget.SeekBar;
+import android.view.View;
+import android.view.ViewGroup.LayoutParams;
+import android.widget.FrameLayout;
+import android.widget.RelativeLayout;
+import br.com.rubythree.arduinoblinkled.HSVColorPickerDialog.OnColorSelectedListener;
 
 import com.android.future.usb.UsbAccessory;
 import com.android.future.usb.UsbManager;
 
 public class MainActivity extends Activity {
 
-	// TAG is used to debug in Android logcat console
 	private static final String TAG = "ArduinoAccessory";
 
 	private static final String ACTION_USB_PERMISSION = "com.google.android.DemoKit.action.USB_PERMISSION";
@@ -29,12 +54,41 @@ public class MainActivity extends Activity {
 	private UsbManager mUsbManager;
 	private PendingIntent mPermissionIntent;
 	private boolean mPermissionRequestPending;
-	private SeekBar seekBarRed, seekBarGreen, seekBarBlue;
 
 	UsbAccessory mAccessory;
 	ParcelFileDescriptor mFileDescriptor;
 	FileInputStream mInputStream;
 	FileOutputStream mOutputStream;
+	RelativeLayout relativeLayout;
+
+	private HSVColorWheel colorWheel;
+	private HSVValueSlider valueSlider;
+
+	private static final int CONTROL_SPACING_DP = 20;
+	private static final int SELECTED_COLOR_HEIGHT_DP = 50;
+	private static final int BORDER_DP = 1;
+	private static final int BORDER_COLOR = Color.BLACK;
+
+	int selectedColor;
+
+	private View selectedColorView;
+
+	private ShakeListener mShaker;
+
+	int initialColor;
+	
+	BluetoothAdapter mBluetoothAdapter;
+    BluetoothSocket mmSocket;
+    BluetoothDevice mmDevice;
+    
+    OutputStream mmOutputStream;
+    InputStream mmInputStream;
+    
+    Thread workerThread;
+    byte[] readBuffer;
+    int readBufferPosition;
+    
+    volatile boolean stopWorker;
 
 	private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
 		@Override
@@ -77,106 +131,129 @@ public class MainActivity extends Activity {
 			openAccessory(mAccessory);
 		}
 
-		setContentView(R.layout.activity_main);
-		seekBarRed = (SeekBar) findViewById(R.id.seekBarRed);
-		seekBarGreen = (SeekBar) findViewById(R.id.seekBarGreen);
-		seekBarBlue = (SeekBar) findViewById(R.id.seekBarBlue);
+		initialColor = 0xFFFFFFFF;
 
-		seekBarRed
-				.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+		colorWheel = new HSVColorWheel(this);
+		valueSlider = new HSVValueSlider(this);
 
-					@Override
-					public void onProgressChanged(SeekBar seekBar,
-							int progress, boolean fromUser) {
-						byte[] buffer = new byte[3];
+		this.selectedColor = initialColor;
 
-						buffer[0] = (byte) progress;
-						buffer[1] = (byte) seekBarGreen.getProgress();
-						buffer[2] = (byte) seekBarBlue.getProgress();
+		int borderSize = (int) (this.getResources().getDisplayMetrics().density * BORDER_DP);
+		RelativeLayout layout = new RelativeLayout(this);
 
-						if (mOutputStream != null) {
-							try {
-								mOutputStream.write(buffer);
-							} catch (IOException e) {
-								Log.e(TAG, "write failed", e);
-							}
-						}
-					}
-
-					@Override
-					public void onStartTrackingTouch(SeekBar seekBar) {
-
-					}
-
-					@Override
-					public void onStopTrackingTouch(SeekBar seekBar) {
-
-					}
-				});
-		
-		seekBarGreen
-		.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-
-			@Override
-			public void onProgressChanged(SeekBar seekBar,
-					int progress, boolean fromUser) {
-				byte[] buffer = new byte[3];
-
-				buffer[0] = (byte) seekBarRed.getProgress();
-				buffer[1] = (byte) progress;
-				buffer[2] = (byte) seekBarBlue.getProgress();
-
-				if (mOutputStream != null) {
-					try {
-						mOutputStream.write(buffer);
-					} catch (IOException e) {
-						Log.e(TAG, "write failed", e);
-					}
-				}
+		RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
+				LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
+		lp.bottomMargin = (int) (this.getResources().getDisplayMetrics().density * CONTROL_SPACING_DP);
+		colorWheel.setListener(new OnColorSelectedListener() {
+			public void colorSelected(Integer color) {
+				valueSlider.setColor(color, true);
 			}
+		});
+		colorWheel.setColor(initialColor);
+		colorWheel.setId(1);
+		layout.addView(colorWheel, lp);
 
+		int selectedColorHeight = (int) (this.getResources()
+				.getDisplayMetrics().density * SELECTED_COLOR_HEIGHT_DP);
+
+		FrameLayout valueSliderBorder = new FrameLayout(this);
+		valueSliderBorder.setBackgroundColor(BORDER_COLOR);
+		valueSliderBorder.setPadding(borderSize, borderSize, borderSize,
+				borderSize);
+		valueSliderBorder.setId(2);
+		lp = new RelativeLayout.LayoutParams(LayoutParams.MATCH_PARENT,
+				selectedColorHeight + 2 * borderSize);
+		lp.bottomMargin = (int) (this.getResources().getDisplayMetrics().density * CONTROL_SPACING_DP);
+		lp.addRule(RelativeLayout.BELOW, 1);
+		layout.addView(valueSliderBorder, lp);
+
+		valueSlider.setColor(initialColor, false);
+		valueSlider.setListener(new OnColorSelectedListener() {
 			@Override
-			public void onStartTrackingTouch(SeekBar seekBar) {
+			public void colorSelected(Integer color) {
+				selectedColor = color;
+				selectedColorView.setBackgroundColor(color);
 
+				int red = (color >> 16) & 0xFF;
+				int green = (color >> 8) & 0xFF;
+				int blue = (color >> 0) & 0xFF;
+
+				setColor(red, green, blue);
 			}
+		});
+		valueSliderBorder.addView(valueSlider);
 
-			@Override
-			public void onStopTrackingTouch(SeekBar seekBar) {
+		FrameLayout selectedColorborder = new FrameLayout(this);
+		selectedColorborder.setBackgroundColor(BORDER_COLOR);
+		lp = new RelativeLayout.LayoutParams(LayoutParams.MATCH_PARENT,
+				selectedColorHeight + 2 * borderSize);
+		selectedColorborder.setPadding(borderSize, borderSize, borderSize,
+				borderSize);
+		lp.addRule(RelativeLayout.BELOW, 2);
+		layout.addView(selectedColorborder, lp);
 
+		selectedColorView = new View(this);
+		selectedColorView.setBackgroundColor(selectedColor);
+		selectedColorborder.addView(selectedColorView);
+
+		setContentView(layout);
+
+		final Vibrator vibe = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+
+		mShaker = new ShakeListener(this);
+		mShaker.setOnShakeListener(new ShakeListener.OnShakeListener() {
+			public void onShake() {
+				vibe.vibrate(100);
+				setColor(255, 255, 255);
+
+				valueSlider.setColor(initialColor, false);
+				colorWheel.setColor(initialColor);
 			}
 		});
 		
-		seekBarBlue
-		.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+		/* BLUETOOTH TESTS */
+//		findBT();
+//		
+//		try {
+//			openBT();
+//		} catch (IOException e) {
+//			// TODO Auto-generated catch block
+//			e.printStackTrace();
+//		}
+		
+		StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
+		StrictMode.setThreadPolicy(policy); 
+	}
 
-			@Override
-			public void onProgressChanged(SeekBar seekBar,
-					int progress, boolean fromUser) {
-				byte[] buffer = new byte[3];
+	protected void setColor(int red, int green, int blue) {
+		byte[] buffer = new byte[3];
 
-				buffer[0] = (byte) seekBarRed.getProgress();
-				buffer[1] = (byte) seekBarGreen.getProgress();	
-				buffer[2] = (byte) progress;
-				
-				if (mOutputStream != null) {
-					try {
-						mOutputStream.write(buffer);
-					} catch (IOException e) {
-						Log.e(TAG, "write failed", e);
-					}
-				}
-			}
+		buffer[0] = (byte) red;
+		buffer[1] = (byte) green;
+		buffer[2] = (byte) blue;
 
-			@Override
-			public void onStartTrackingTouch(SeekBar seekBar) {
+		/*		BLUETOOTH TESTS     */
+		
+//		try {
+//			sendData("62625256325636251");
+//		} catch (IOException e1) {
+//			Log.i(TAG, "ERRROOOOOOOOOOOOOOORRR");
+//			e1.printStackTrace();
+//		}
 
-			}
-
-			@Override
-			public void onStopTrackingTouch(SeekBar seekBar) {
-
-			}
-		});
+		/*	    Serial cable Tests  */ 
+//		if (mOutputStream != null) {
+//			try {
+//				mOutputStream.write(buffer);
+//			} catch (IOException e) {
+//				Log.i(TAG, "WRITE ERRROOOOOOOOOOOOOOORRR");
+//				Log.e(TAG, "write failed", e);
+//			}
+//		}
+		
+		/*		WiFi Tests */
+		PostAsync post = new PostAsync();
+		post.execute(red+"", green+"", blue+"");
 	}
 
 	@Override
@@ -251,5 +328,121 @@ public class MainActivity extends Activity {
 			mAccessory = null;
 		}
 	}
+	
+	void findBT()
+    {
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if(mBluetoothAdapter == null)
+        {
+            Log.i(TAG, "No bluetooth adapter available");
+        }
+        
+        if(!mBluetoothAdapter.isEnabled())
+        {
+            Intent enableBluetooth = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBluetooth, 0);
+        }
+        
+        Set<BluetoothDevice> pairedDevices = mBluetoothAdapter.getBondedDevices();
+        if(pairedDevices.size() > 0)
+        {
+            for(BluetoothDevice device : pairedDevices)
+            {
+                if(device.getName().equals("SeeedBTSlave")) 
+                {
+                    mmDevice = device;
+                    break;
+                }
+            }
+        }
+        
+        Log.i(TAG, "Bluetooth Device Found");
+    }
+    
+    void openBT() throws IOException
+    {
+        UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb"); //Standard SerialPortService ID
+        mmSocket = mmDevice.createRfcommSocketToServiceRecord(uuid);        
+        mmSocket.connect();
+        mmOutputStream = mmSocket.getOutputStream();
+        mmInputStream = mmSocket.getInputStream();
+        
+        beginListenForData();
+        
+        Log.i(TAG, "Bluetooth Opened: "+mmDevice);
+    }
+    
+    void beginListenForData()
+    {
+        final Handler handler = new Handler(); 
+        final byte delimiter = 10; //This is the ASCII code for a newline character
+        
+        stopWorker = false;
+        readBufferPosition = 0;
+        readBuffer = new byte[1024];
+        workerThread = new Thread(new Runnable()
+        {
+            public void run()
+            {                
+               while(!Thread.currentThread().isInterrupted() && !stopWorker)
+               {
+                    try 
+                    {
+                        int bytesAvailable = mmInputStream.available();                        
+                        if(bytesAvailable > 0)
+                        {
+                            byte[] packetBytes = new byte[bytesAvailable];
+                            mmInputStream.read(packetBytes);
+                            for(int i=0;i<bytesAvailable;i++)
+                            {
+                                byte b = packetBytes[i];
+                                if(b == delimiter)
+                                {
+                                    byte[] encodedBytes = new byte[readBufferPosition];
+                                    System.arraycopy(readBuffer, 0, encodedBytes, 0, encodedBytes.length);
+                                    final String data = new String(encodedBytes, "US-ASCII");
+                                    readBufferPosition = 0;
+                                    
+                                    handler.post(new Runnable()
+                                    {
+                                        public void run()
+                                        {
+                                            Log.i(TAG, "-------------"+data+"----------------");
+                                        }
+                                    });
+                                }
+                                else
+                                {
+                                    readBuffer[readBufferPosition++] = b;
+                                }
+                            }
+                        }
+                    } 
+                    catch (IOException ex) 
+                    {
+                        stopWorker = true;
+                    }
+               }
+            }
+        });
+
+        workerThread.start();
+    }
+    
+    void sendData(String msg) throws IOException
+    {
+    	Log.i(TAG, "Data Sent: "+msg);
+    	Log.i(TAG, "Device: "+mmDevice);
+    	mmOutputStream.write(msg.getBytes());
+    }
+    
+    void closeBT() throws IOException
+    {
+        stopWorker = true;
+        mmOutputStream.close();
+        mmInputStream.close();
+        mmSocket.close();
+        Log.i(TAG, "Bluetooth Closed");
+    }
 
 }

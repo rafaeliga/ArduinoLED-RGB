@@ -7,12 +7,16 @@
     <uses-sdk
         android:minSdkVersion="10"
         android:targetSdkVersion="17" />
+    
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+	<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+	<uses-permission android:name="android.permission.VIBRATE" />
+	<uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
-        android:label="@string/app_name"
-        android:theme="@style/AppTheme" >
+        android:label="@string/app_name" >
         <activity
             android:name="br.com.rubythree.arduinoblinkled.MainActivity"
             android:label="@string/app_name" >
