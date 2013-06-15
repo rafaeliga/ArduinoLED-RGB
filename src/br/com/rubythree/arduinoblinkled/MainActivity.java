@@ -89,6 +89,10 @@ public class MainActivity extends Activity {
     int readBufferPosition;
     
     volatile boolean stopWorker;
+    
+    private Handler mHandler;
+    
+    int redSelected, greenSelected, blueSelected;
 
 	private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver() {
 		@Override
@@ -220,9 +224,6 @@ public class MainActivity extends Activity {
 //			// TODO Auto-generated catch block
 //			e.printStackTrace();
 //		}
-		
-		StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
-		StrictMode.setThreadPolicy(policy); 
 	}
 
 	protected void setColor(int red, int green, int blue) {
@@ -242,19 +243,29 @@ public class MainActivity extends Activity {
 //		}
 
 		/*	    Serial cable Tests  */ 
-//		if (mOutputStream != null) {
-//			try {
-//				mOutputStream.write(buffer);
-//			} catch (IOException e) {
-//				Log.i(TAG, "WRITE ERRROOOOOOOOOOOOOOORRR");
-//				Log.e(TAG, "write failed", e);
-//			}
-//		}
+		if (mOutputStream != null) {
+			try {
+				mOutputStream.write(buffer);
+			} catch (IOException e) {
+				Log.e(TAG, "write failed", e);
+			}
+		}
 		
-		/*		WiFi Tests */
-		PostAsync post = new PostAsync();
-		post.execute(red+"", green+"", blue+"");
+//		redSelected = red;
+//		greenSelected = green;
+//		blueSelected = blue;
+		
+//		mHandler = new Handler();
+//		mHandler.postDelayed(postHand, 1000);
 	}
+	
+	private Runnable postHand = new Runnable() {
+        public void run() {
+        	PostAsync post = new PostAsync();
+        	post.execute(redSelected+"", greenSelected+"", blueSelected+""); 
+        }
+     };
+     
 
 	@Override
 	public Object onRetainNonConfigurationInstance() {

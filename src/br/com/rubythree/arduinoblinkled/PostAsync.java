@@ -14,7 +14,6 @@ import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 
 import android.os.AsyncTask;
-import android.util.Log;
 
 class PostAsync extends AsyncTask<String, Integer, Void>
 {
@@ -31,23 +30,18 @@ class PostAsync extends AsyncTask<String, Integer, Void>
 	    HttpPost httppost = new HttpPost("http://192.168.1.248/");
 
 	    try {
-	        // Add your data
 	        List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(3);
-	        nameValuePairs.add(new BasicNameValuePair("red", params[0]));
-	        nameValuePairs.add(new BasicNameValuePair("green", params[1]));
-	        nameValuePairs.add(new BasicNameValuePair("blue", params[2]));
+	        nameValuePairs.add(new BasicNameValuePair("red", String.format("%03d", Integer.parseInt(params[0]))));
+	        nameValuePairs.add(new BasicNameValuePair("green", String.format("%03d", Integer.parseInt(params[1]))));
+	        nameValuePairs.add(new BasicNameValuePair("blue", String.format("%03d", Integer.parseInt(params[2]))));
 	        httppost.setEntity(new UrlEncodedFormEntity(nameValuePairs));
-
-	        // Execute HTTP Post Request
 	        HttpResponse response = httpclient.execute(httppost);
-	        Log.i("ASYNC", "RESPONSE: "+nameValuePairs);
-	        
 	    } catch (ClientProtocolException e) {
 	    	e.printStackTrace();
 	    } catch (IOException e) {
 	    	e.printStackTrace();
 	    }
-    	
+	    
         return null;
     }
 }
